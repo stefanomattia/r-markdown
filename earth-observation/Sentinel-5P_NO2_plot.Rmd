@@ -1,0 +1,195 @@
+---
+title: "Plotting Sentinel-5P NetCDF products with R and ggplot2"
+output:  
+   md_document:
+    variant: markdown_github
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+I recently started to look into the [R language](https://www.r-project.org), as part of my growing interest in statistical learning and data analysis. As a first impression, I felt a bit overwhelmed by the number of differences with Python, the vast amount of oddly named libraries, and the many different ways to address a given problem, as opposed to Python, where there is usually a general consensus about a *pythonic* way to do things.
+
+Anyway, one of the most effective ways to learn a new programming language is to try using it to solve familiar problems. And that is precisely what I have been doing in the past few days, looking into a fast and efficient way to plot some fresh [Sentinel-5P](http://www.esa.int/Our_Activities/Observing_the_Earth/Copernicus/Sentinel-5P/Satellite) [NO$_2$](http://www.tropomi.eu/data-products/nitrogen-dioxide) data over a world map.
+
+In this post, we are going to read the contents of several NetCDF4 products and turn them into a single data frame, where each row will contain an observation and the related geodetic coordinates. We are then going to *slice* the global data frame over a region of interest, and plot the correspondent data over a map with [ggplot2](http://ggplot2.tidyverse.org). I am sure there are more clever and elegant ways to approach this task and I will make sure to document them in future posts.
+
+## Handling NetCDF4 file in R
+
+There seems to be a general agreement in the R community that NetCDF4 files should be handled via the  [ncdf4](https://cran.r-project.org/web/packages/ncdf4/index.html) package. I noticed that people are also using the [raster](https://cran.r-project.org/web/packages/raster/index.html) package, which can also read NetCDF4 files, but I still have to look into that.  
+Let's load the needed libraries.
+
+```{r}
+library(ncdf4)
+library(ggplot2)
+```
+
+We are now going to load a product into the R environment, just to show how to access its attributes.
+
+```{r}
+# set path and filename
+ncpath <- "/Users/stefano/src/s5p/products/S5P_L2_NO2_KNMI_TEST_v001108_run2/"
+ncname <- "S5P_TEST_L2__NO2OMI_20171121T120210_20171121T134257_00555_01_001108_20171216T235943"  
+ncfname <- paste(ncpath, ncname, ".nc", sep="")
+nc <- nc_open(ncfname)
+```
+
+If we were to print the file information with a `print(nc)` command, we would get the dump of the entire file structure: too much to be included in this post. Therefore, we will save it to a text file. This nifty piece of code will do the trick:
+
+```{r}
+{
+  sink(paste0(ncpath, ncname, ".txt"))
+  print(nc)
+  sink()
+}
+```
+`sink` diverts R output to a connection (and must be used again to finish such a diversion). We can then display the generated text file in our shell or open it with any text editor. It is very similar to what would be generated using the `ncdump` tool.
+
+Next, we could display some summary information about this particular product:
+
+```{r}
+attributes(nc)$names
+print(paste("The file has", nc$nvars, "variables,", nc$ndims, "dimensions and", nc$natts, "NetCDF attributes"))
+```
+
+We can access and display all the available variables through the `var` dimension:
+
+```{r}
+attributes(nc$var)$names
+```
+Quite a few of them!
+
+In this post, we am going to focus our attention on the NO$_2$ total column variable, whose attributes can be read via the `ncatt_get` function:
+
+```{r}
+ncatt_get(nc, "DETAILED_RESULTS/nitrogendioxide_total_column")
+```
+
+The actual data is read with the `ncvar_get` function. We could, for example, read the NO$_2$ total column data, along with the latitude and longitude information and store them into separate variables.
+
+```{r}
+no2tc <- ncvar_get(nc, "DETAILED_RESULTS/nitrogendioxide_total_column")
+lat <- ncvar_get(nc, "PRODUCT/latitude")
+lon <- ncvar_get(nc, "PRODUCT/longitude")
+dim(no2tc)
+```
+
+The data structure follows the Sentinel-5P product convention to store measurements into a scanline/ground pixel rectangular grid. As shown by the `dim` function, there are 3246 scanlines in this product, each one containing 450 ground pixels. Each ground pixel has associated coordinates stored in the latitude/longitude attributes.  
+We can now close the file:
+
+```{r}
+nc_close(nc)
+```
+
+
+## Preparing the data frame
+
+In principle, we could go ahead and plot this data, but the resulting plot would only include a single pass. If we want global coverage, we need to include an entire 15-orbit data set. To do so, we are going to loop over the list of files in the data set, read the content of the `nitrogendioxide_total_column` attribute and store it into a data frame, along with the associated coordinates. Note that we will be flattening the original two-dimensional data structures into a one-dimensional vector, using the `as.vector` function. On each $i_{th}$  iteration, we are going to concatenate the data frame created from the $i_{th}$ file to the existing data frame via the `rbind` function. As the whole process could take some time—it is a 6.6GB data set—we are going to measure the execution time.
+
+
+```{r}
+# declare dataframe
+no2df = NULL
+
+# get filenames
+no2files = list.files(ncpath, patter="*nc", full.names=TRUE)
+
+# save start time
+start.time <- Sys.time()
+
+# loop over filenames, open each one and add to dataframe
+for (i in seq_along(no2files)) {
+  nc <- nc_open(no2files[i])
+  # get variables of interest
+  no2tc <- ncvar_get(nc, "DETAILED_RESULTS/nitrogendioxide_total_column")
+  lat <- ncvar_get(nc, "PRODUCT/latitude")
+  lon <- ncvar_get(nc, "PRODUCT/longitude")
+  # concatenate the new data to the global data frame
+  no2df <- rbind(no2df, data.frame(lat=as.vector(lat), 
+                                   lon=as.vector(lon), 
+                                   no2tc=as.vector(no2tc)))
+  # close file
+  nc_close(nc)
+}
+
+# measure elapsed time
+stop.time <- Sys.time()
+time.taken <- stop.time - start.time
+
+print(paste(dim(no2df)[1], "observations read from", length(no2files), 
+            "files in", time.taken, "seconds"))
+```
+
+That's a big data set! Let's have a look at it:
+```{r}
+head(no2df)
+```
+As expected, each row contains an NO$_2$ measurement and the associated coordinates of the center pixel.
+
+## Plotting the data 
+
+To display regional plot, we'd better subset the data frame first, that is, we are going to reduce the number of pixels (or data frame rows) handed over to the plot function. As we don't want to duplicate code every time we make a new plot, we are going to define a function that accepts boundary coordinates and plot the correspondent region on a map.
+
+```{r}
+PlotRegion <- function(df, latlon, title) {
+  # Plot the given dataset over a geographic region.
+  #
+  # Args:
+  #   df: The dataset, should include the no2tc, lat, lon columns
+  #   latlon: A vector of four values identifying the botton-left and top-right corners 
+  #           c(latmin, latmax, lonmin, lonmax)
+  #   title: The plot title
+  
+  # subset the data frame first
+  df_sub <- subset(df, lat>latlon[1] & lat<latlon[2] & lon>latlon[3] & lon<latlon[4])
+
+  ggplot(df_sub, aes(y=lat, x=lon, fill=no2tc)) + 
+    geom_tile(width=1, height=1) +
+    borders('world', xlim=range(df_sub$lon), ylim=range(df_sub$lat), colour='gray80', size=.2) + 
+    theme_light() + 
+    theme(panel.ontop=TRUE, panel.background=element_blank(), plot.title = element_text(hjust=0.5)) +
+    scale_color_distiller(palette='Spectral') +
+    scale_fill_distiller(palette='Spectral') +
+    coord_quickmap(xlim=c(latlon[3], latlon[4]), ylim=c(latlon[1], latlon[2])) +
+    labs(title=title, x="Longitude", y="Latitude", fill=expression(mol~m^-2))
+}
+```
+
+There is a lot going on when calling the `ggplot` function, and the syntax might look a bit puzzling at first. Basically, we first need to define the base plot specifying the data to use and the aesthetics, and after that we can add more layers and themes to it.
+
+Let's see how it looks like. Let's define some coordinate boundaries over Europe:
+
+```{r}
+eu.coords = c(34, 60, -15, 35)
+PlotRegion(no2df, eu.coords, expression(NO[2]~total~vertical~column~over~Europe))
+```
+
+That looks amazing! Well, not so much for our lungs, but still...  
+Pollution on the Po Valley in Italy is clearly visible, as well as bright spots on Madrid, Algiers, and Prague. The whole area over the Netherlands, Denmark, and Germany seems to be wrapped in a tick layer of NO$_2$.
+Some artifacts are noticeable on the east side of Great Britain, that's probably due to overlapping orbits, as our original data set contained more than fifteen orbits.  
+A clever approach in this case would have been to apply some binning and averaging when building the data frame, but that is possibly a topic for a future post.
+
+Curious about how North America is faring with their NO$_2$ concentration? Let's see!
+
+```{r}
+us.coords = c(15, 64, -135, -40)
+PlotRegion(no2df, us.coords, expression(NO[2]~total~vertical~column~over~USA))
+```
+
+It doesn't look much better, especially if you live on the east coast!
+
+## Conclusion 
+
+In this post, we went through a few key concepts on dealing with NetCDF data in R: handling NetCDF files, extracting data from multiple files and building data frames, subsetting data frames and plotting the results. I don’t even feel like I have scratched the surface of what can be done with R and `ggplot2`, but hopefully this post gives an idea on how easy it is to handle and display atmosphere chemistry data in R.
+In the future, I'd like to look into [visualizing heatmaps](https://blog.dominodatalab.com/geographic-visualization-with-rs-ggmaps/) with the [`ggmap`](https://github.com/dkahle/ggmap) package. 
+
+I hope you enjoyed this post, feel free to comment if you have questions or remarks.
+
+References:  
+1. [NetCDF in R](http://geog.uoregon.edu/bartlein/courses/geog490/week04-netCDF.html)  
+2. [Starting from netCDF files](https://cran.r-project.org/web/packages/futureheatwaves/vignettes/starting_from_netcdf.html)  
+3. [How to properly plot projected gridded data in ggplot2?](https://stackoverflow.com/questions/43612903/how-to-properly-plot-projected-gridded-data-in-ggplot2)  
+
+*This post was written entirely in R markdown. You can download it on my [GitHub repository](https://github.com/stefanomattia/r_markdown/tree/master/earth-observation).*  
+
+*Disclaimer: the data shown in this post should not be considered representative of TROPOMI operational capabilities as the instrument is still undergoing its validation phase.*

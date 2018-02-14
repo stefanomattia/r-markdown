@@ -190,6 +190,6 @@ References:
 2. [Starting from netCDF files](https://cran.r-project.org/web/packages/futureheatwaves/vignettes/starting_from_netcdf.html)  
 3. [How to properly plot projected gridded data in ggplot2?](https://stackoverflow.com/questions/43612903/how-to-properly-plot-projected-gridded-data-in-ggplot2)  
 
-*This post was written entirely in R markdown. You can download it on my [GitHub repository](https://github.com/stefanomattia/r_markdown/tree/master/earth-observation).*  
+*This post was written entirely in R markdown. You can download it on my [GitHub repository](https://github.com/stefanomattia/r-markdown/tree/master/earth-observation).*  
 
 *Disclaimer: the data shown in this post should not be considered representative of TROPOMI operational capabilities as the instrument is still undergoing its validation phase.*

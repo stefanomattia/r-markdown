@@ -64,6 +64,12 @@ In this post, we am going to focus our attention on the NO$_2$ total column vari
 ```{r}
 ncatt_get(nc, "DETAILED_RESULTS/nitrogendioxide_total_column")
 ```
+We are going to save the multiplication factor to convert to molecules/cm$^2$ and the fill value, which will come in handy later:
+
+```{r}
+mfactor = ncatt_get(nc, "DETAILED_RESULTS/nitrogendioxide_total_column", "multiplication_factor_to_convert_to_molecules_percm2")
+fillvalue = ncatt_get(nc, "DETAILED_RESULTS/nitrogendioxide_total_column", "_FillValue")
+```
 
 The actual data is read with the `ncvar_get` function. We could, for example, read the NO$_2$ total column data, along with the latitude and longitude information and store them into separate variables.
 
@@ -84,7 +90,7 @@ nc_close(nc)
 
 ## Preparing the data frame
 
-In principle, we could go ahead and plot this data, but the resulting plot would only include a single pass. If we want global coverage, we need to include an entire 15-orbit data set. To do so, we are going to loop over the list of files in the data set, read the content of the `nitrogendioxide_total_column` attribute and store it into a data frame, along with the associated coordinates. Note that we will be flattening the original two-dimensional data structures into a one-dimensional vector, using the `as.vector` function. On each $i_{th}$  iteration, we are going to concatenate the data frame created from the $i_{th}$ file to the existing data frame via the `rbind` function. As the whole process could take some time—it is a 6.6GB data set—we are going to measure the execution time.
+In principle, we could go ahead and plot this data, but the resulting plot would only include a single pass. If we want global coverage, we need to include an entire 15-orbit data set. To do so, we are going to loop over the list of files in the data set, read the content of the `nitrogendioxide_total_column` attribute and store it into a data frame, along with the associated coordinates. As an intermediate step, we are going to convert the unit to molecules/cm$^2$ using the conversion factor we saved before. Note that we will be flattening the original two-dimensional data structures into a one-dimensional vector, using the `as.vector` function. On each $i_{th}$  iteration, we are going to concatenate the data frame created from the $i_{th}$ file to the existing data frame via the `rbind` function. As the whole process could take some time—it is a 6.6GB data set—we are going to measure the execution time.
 
 
 ```{r}
@@ -101,7 +107,9 @@ start.time <- Sys.time()
 for (i in seq_along(no2files)) {
   nc <- nc_open(no2files[i])
   # get variables of interest
-  no2tc <- ncvar_get(nc, "DETAILED_RESULTS/nitrogendioxide_total_column")
+  no2tc <- ncvar_get(nc, "DETAILED_RESULTS/nitrogendioxide_total_column") 
+  # apply multiplication factor for unit conversion
+  no2tc <- no2tc*mfactor$value
   lat <- ncvar_get(nc, "PRODUCT/latitude")
   lon <- ncvar_get(nc, "PRODUCT/longitude")
   # concatenate the new data to the global data frame
@@ -128,7 +136,7 @@ As expected, each row contains an NO$_2$ measurement and the associated coordina
 
 ## Plotting the data 
 
-To display regional plot, we'd better subset the data frame first, that is, we are going to reduce the number of pixels (or data frame rows) handed over to the plot function. As we don't want to duplicate code every time we make a new plot, we are going to define a function that accepts boundary coordinates and plot the correspondent region on a map.
+To display regional plot, we'd better subset the data frame first, that is, we are going to reduce the number of pixels (or data frame rows) handed over to the plot function, by means of coordinate boundaries. We are also going to filter out all entries containing the fill value. As we don't want to duplicate code every time we make a new plot, we are going to define a function that accepts boundary coordinates and plot the correspondent region on a map.
 
 ```{r}
 PlotRegion <- function(df, latlon, title) {
@@ -141,21 +149,22 @@ PlotRegion <- function(df, latlon, title) {
   #   title: The plot title
   
   # subset the data frame first
-  df_sub <- subset(df, lat>latlon[1] & lat<latlon[2] & lon>latlon[3] & lon<latlon[4])
-
+  df_sub <- subset(df, no2tc!=fillvalue & lat>latlon[1] & lat<latlon[2] & lon>latlon[3] & lon<latlon[4])
+  subtitle = paste("Data min =", formatC(min(df_sub$no2tc, na.rm=T), format="e", digits=2), 
+                   "max =", formatC(max(df_sub$no2tc, na.rm=T), format="e", digits=2))
+  
   ggplot(df_sub, aes(y=lat, x=lon, fill=no2tc)) + 
     geom_tile(width=1, height=1) +
-    borders('world', xlim=range(df_sub$lon), ylim=range(df_sub$lat), colour='gray80', size=.2) + 
+    borders('world', xlim=range(df_sub$lon), ylim=range(df_sub$lat), colour='gray90', size=.2) + 
     theme_light() + 
-    theme(panel.ontop=TRUE, panel.background=element_blank(), plot.title = element_text(hjust=0.5)) +
-    scale_color_distiller(palette='Spectral') +
-    scale_fill_distiller(palette='Spectral') +
+    theme(panel.ontop=TRUE, panel.background=element_blank()) +
+    scale_fill_distiller(palette='Spectral', limits=c(quantile(df_sub, .7, na.rm=T), quantile(df_sub, .999, na.rm=T))) +
     coord_quickmap(xlim=c(latlon[3], latlon[4]), ylim=c(latlon[1], latlon[2])) +
-    labs(title=title, x="Longitude", y="Latitude", fill=expression(mol~m^-2))
+    labs(title=title, subtitle=subtitle, x="Longitude", y="Latitude", fill=expression(molecules~cm^-2))
 }
 ```
 
-There is a lot going on when calling the `ggplot` function, and the syntax might look a bit puzzling at first. Basically, we first need to define the base plot specifying the data to use and the aesthetics, and after that we can add more layers and themes to it.
+There is a lot going on when calling the `ggplot` function, and the syntax might look a bit puzzling at first. Basically, we first need to define the base plot specifying the data to use and the aesthetics, and after that we can add more layers and themes to it. I played a bit with the limits controlling the color scale in the `scale_fill_distiller` function in order to convey more information in the plot, which would otherwise look too *flat*, because of the outliers.
 
 Let's see how it looks like. Let's define some coordinate boundaries over Europe:
 
@@ -175,8 +184,7 @@ Curious about how North America is faring with their NO$_2$ concentration? Let's
 us.coords = c(15, 64, -135, -40)
 PlotRegion(no2df, us.coords, expression(NO[2]~total~vertical~column~over~USA))
 ```
-
-It doesn't look much better, especially if you live on the east coast!
+Here we can clearly see the different passes, each of them 3000km wide and acquired 100 minutes apart from each other. We can easily spot San Francisco and the Los Angeles/San Diego area on the west coast, Mexico City in the south, and Chicago in the mid-west. The whole north-east coast seems to be the area most affected by pollution.  
 
 ## Conclusion 
 

@@ -49,7 +49,8 @@ Next, we could display some summary information about this particular product:
 
 ```{r}
 attributes(nc)$names
-print(paste("The file has", nc$nvars, "variables,", nc$ndims, "dimensions and", nc$natts, "NetCDF attributes"))
+print(paste("The file has", nc$nvars, "variables,", nc$ndims, 
+            "dimensions and", nc$natts, "NetCDF attributes"))
 ```
 
 We can access and display all the available variables through the `var` dimension:
@@ -67,8 +68,10 @@ ncatt_get(nc, "DETAILED_RESULTS/nitrogendioxide_total_column")
 We are going to save the multiplication factor to convert to molecules/cm$^2$ and the fill value, which will come in handy later:
 
 ```{r}
-mfactor = ncatt_get(nc, "DETAILED_RESULTS/nitrogendioxide_total_column", "multiplication_factor_to_convert_to_molecules_percm2")
-fillvalue = ncatt_get(nc, "DETAILED_RESULTS/nitrogendioxide_total_column", "_FillValue")
+mfactor = ncatt_get(nc, "DETAILED_RESULTS/nitrogendioxide_total_column", 
+                    "multiplication_factor_to_convert_to_molecules_percm2")
+fillvalue = ncatt_get(nc, "DETAILED_RESULTS/nitrogendioxide_total_column", 
+                      "_FillValue")
 ```
 
 The actual data is read with the `ncvar_get` function. We could, for example, read the NO$_2$ total column data, along with the latitude and longitude information and store them into separate variables.
@@ -155,12 +158,17 @@ PlotRegion <- function(df, latlon, title) {
   
   ggplot(df_sub, aes(y=lat, x=lon, fill=no2tc)) + 
     geom_tile(width=1, height=1) +
-    borders('world', xlim=range(df_sub$lon), ylim=range(df_sub$lat), colour='gray90', size=.2) + 
+    borders('world', xlim=range(df_sub$lon), ylim=range(df_sub$lat), 
+            colour='gray90', size=.2) + 
     theme_light() + 
     theme(panel.ontop=TRUE, panel.background=element_blank()) +
-    scale_fill_distiller(palette='Spectral', limits=c(quantile(df_sub, .7, na.rm=T), quantile(df_sub, .999, na.rm=T))) +
+    scale_fill_distiller(palette='Spectral', 
+                         limits=c(quantile(df_sub, .7, na.rm=T), 
+                                  quantile(df_sub, .999, na.rm=T))) +
     coord_quickmap(xlim=c(latlon[3], latlon[4]), ylim=c(latlon[1], latlon[2])) +
-    labs(title=title, subtitle=subtitle, x="Longitude", y="Latitude", fill=expression(molecules~cm^-2))
+    labs(title=title, subtitle=subtitle, 
+         x="Longitude", y="Latitude", 
+         fill=expression(molecules~cm^-2))
 }
 ```
 
